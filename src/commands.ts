@@ -4,6 +4,7 @@ import path from "path";
 import { ClaudeClient, getDefaultClient } from "./claude.js";
 import { loadInput, formatFileInfo, listCodeFiles, readFile } from "./reader.js";
 import { header, subheader, formatUsage, dim, bold, warn, info, spinner } from "./formatter.js";
+import { FileError } from "./errors.js";
 import type { ExtractedData, CodeReview, RedactReport, CommandOpts, TokenUsage, FileContent } from "./types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -266,7 +267,7 @@ export async function chat(
   opts: CommandOpts
 ) {
   if (filePath === "-") {
-    throw new Error("Interactive chat mode does not support stdin (-). Provide a file path.");
+    throw new FileError("Interactive chat mode does not support stdin (-). Provide a file path.");
   }
   const file = await loadInput(filePath);
   header("Interactive Chat", formatFileInfo(file));

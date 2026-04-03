@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { FileContent, TokenUsage, StreamResult } from "./types.js";
-import { AuthError } from "./errors.js";
+import { AuthError, RateLimitError } from "./errors.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
@@ -11,6 +11,7 @@ export function buildFileContent(file: FileContent): Anthropic.ContentBlockParam
   const blocks: Anthropic.ContentBlockParam[] = [];
 
   if (file.type === "pdf" && file.base64) {
+    // as any — Anthropic SDK types don't include document blocks yet
     blocks.push({
       type: "document",
       source: {
@@ -24,7 +25,7 @@ export function buildFileContent(file: FileContent): Anthropic.ContentBlockParam
       type: "image",
       source: {
         type: "base64",
-        media_type: file.mimeType as any,
+        media_type: file.mimeType as any, // SDK media_type union may not cover all MIME types
         data: file.base64,
       },
     });
@@ -62,6 +63,7 @@ export class ClaudeClient {
 
   // ── Shared stream drain helper ──────────────────────────
 
+  // MessageStream type from Anthropic SDK
   private async drainStream(stream: any): Promise<StreamResult> {
     let fullResponse = "";
     for await (const event of stream) {
@@ -94,12 +96,18 @@ export class ClaudeClient {
     const fileBlocks = buildFileContent(file);
     fileBlocks.push({ type: "text", text: userInstruction });
 
-    const stream = this.client.messages.stream({
-      model: opts?.model ?? this.model,
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [{ role: "user", content: fileBlocks }],
-    });
+    let stream;
+    try {
+      stream = this.client.messages.stream({
+        model: opts?.model ?? this.model,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: "user", content: fileBlocks }],
+      });
+    } catch (err: any) {
+      if (err?.status === 429) throw new RateLimitError();
+      throw err;
+    }
 
     return this.drainStream(stream);
   }
@@ -116,14 +124,20 @@ export class ClaudeClient {
     const fileBlocks = buildFileContent(file);
     fileBlocks.push({ type: "text", text: userInstruction });
 
-    const response = await this.client.messages.create({
-      model: opts?.model ?? this.model,
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [{ role: "user", content: fileBlocks }],
-    });
+    let response;
+    try {
+      response = await this.client.messages.create({
+        model: opts?.model ?? this.model,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: "user", content: fileBlocks }],
+      });
+    } catch (err: any) {
+      if (err?.status === 429) throw new RateLimitError();
+      throw err;
+    }
 
-    const text = response.content[0].type === "text" ? response.content[0].text : "";
+    const text = response.content.length > 0 && response.content[0].type === "text" ? response.content[0].text : "";
 
     const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text];
     const jsonStr = jsonMatch[1]?.trim() ?? text.trim();
@@ -159,12 +173,18 @@ export class ClaudeClient {
       { type: "text", text: userInstruction },
     ];
 
-    const stream = this.client.messages.stream({
-      model: opts?.model ?? this.model,
-      max_tokens: 8192,
-      system: systemPrompt,
-      messages: [{ role: "user", content }],
-    });
+    let stream;
+    try {
+      stream = this.client.messages.stream({
+        model: opts?.model ?? this.model,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: "user", content }],
+      });
+    } catch (err: any) {
+      if (err?.status === 429) throw new RateLimitError();
+      throw err;
+    }
 
     return this.drainStream(stream);
   }
@@ -192,12 +212,18 @@ export class ClaudeClient {
       }
     }
 
-    const stream = this.client.messages.stream({
-      model: opts?.model ?? this.model,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: apiMessages,
-    });
+    let stream;
+    try {
+      stream = this.client.messages.stream({
+        model: opts?.model ?? this.model,
+        max_tokens: 4096,
+        system: systemPrompt,
+        messages: apiMessages,
+      });
+    } catch (err: any) {
+      if (err?.status === 429) throw new RateLimitError();
+      throw err;
+    }
 
     return this.drainStream(stream);
   }
