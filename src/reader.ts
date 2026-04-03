@@ -5,49 +5,47 @@ import type { FileContent, FileType } from "./types.js";
 // ── Language detection by extension ─────────────────────────
 
 const CODE_EXTENSIONS: Record<string, string> = {
-  ".ts": "typescript",
-  ".tsx": "typescript",
-  ".js": "javascript",
-  ".jsx": "javascript",
-  ".py": "python",
+  ".ts": "typescript", ".tsx": "typescript",
+  ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+  ".py": "python", ".pyw": "python",
   ".rb": "ruby",
   ".go": "go",
   ".rs": "rust",
   ".java": "java",
-  ".kt": "kotlin",
+  ".kt": "kotlin", ".kts": "kotlin",
   ".swift": "swift",
-  ".c": "c",
-  ".cpp": "cpp",
-  ".h": "c",
-  ".hpp": "cpp",
+  ".c": "c", ".h": "c",
+  ".cpp": "cpp", ".hpp": "cpp", ".cc": "cpp", ".cxx": "cpp",
   ".cs": "csharp",
   ".php": "php",
   ".r": "r",
   ".scala": "scala",
-  ".sh": "bash",
-  ".bash": "bash",
-  ".zsh": "zsh",
-  ".fish": "fish",
+  ".sh": "bash", ".bash": "bash", ".zsh": "zsh", ".fish": "fish",
   ".sql": "sql",
   ".lua": "lua",
-  ".ex": "elixir",
-  ".exs": "elixir",
+  ".ex": "elixir", ".exs": "elixir",
   ".erl": "erlang",
   ".hs": "haskell",
   ".ml": "ocaml",
   ".dart": "dart",
   ".vue": "vue",
   ".svelte": "svelte",
+  ".tf": "terraform", ".hcl": "hcl",
+  ".yaml": "yaml", ".yml": "yaml",
+  ".toml": "toml",
+  ".xml": "xml",
+  ".html": "html", ".htm": "html",
+  ".css": "css", ".scss": "scss", ".less": "less",
+  ".graphql": "graphql", ".gql": "graphql",
+  ".proto": "protobuf",
+  ".sol": "solidity",
+  ".zig": "zig",
+  ".nim": "nim",
+  ".v": "vlang",
+  ".jl": "julia",
 };
 
-const IMAGE_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".bmp",
-]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
 const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -67,28 +65,17 @@ function detectFileType(filePath: string): {
 } {
   const ext = path.extname(filePath).toLowerCase();
 
-  if (ext === ".pdf") {
-    return { type: "pdf", mimeType: "application/pdf" };
-  }
-
-  if (IMAGE_EXTENSIONS.has(ext)) {
-    return { type: "image", mimeType: IMAGE_MIME[ext] || "image/png" };
-  }
-
-  if (ext === ".csv") {
-    return { type: "csv" };
-  }
+  if (ext === ".pdf") return { type: "pdf", mimeType: "application/pdf" };
+  if (IMAGE_EXTENSIONS.has(ext)) return { type: "image", mimeType: IMAGE_MIME[ext] || "image/png" };
+  if (ext === ".csv") return { type: "csv" };
 
   const language = CODE_EXTENSIONS[ext];
-  if (language) {
-    return { type: "code", language };
-  }
+  if (language) return { type: "code", language };
 
-  // Default: treat as text
   return { type: "text" };
 }
 
-// ── Read a file and return structured content ───────────────
+// ── Read a file from disk ───────────────────────────────────
 
 export function readFile(filePath: string): FileContent {
   const resolved = path.resolve(filePath);
@@ -102,7 +89,7 @@ export function readFile(filePath: string): FileContent {
     throw new Error(`Not a file: ${resolved}`);
   }
 
-  const maxSize = 50 * 1024 * 1024; // 50MB limit
+  const maxSize = 50 * 1024 * 1024;
   if (stat.size > maxSize) {
     throw new Error(
       `File too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB (max 50MB)`
@@ -114,26 +101,52 @@ export function readFile(filePath: string): FileContent {
 
   if (type === "pdf" || type === "image") {
     const buffer = fs.readFileSync(resolved);
-    return {
-      path: resolved,
-      name,
-      type,
-      mimeType,
-      base64: buffer.toString("base64"),
-      size: stat.size,
-    };
+    return { path: resolved, name, type, mimeType, base64: buffer.toString("base64"), size: stat.size };
   }
 
-  // Text-based files
   const text = fs.readFileSync(resolved, "utf-8");
-  return {
-    path: resolved,
-    name,
-    type,
-    language,
-    text,
-    size: stat.size,
-  };
+  return { path: resolved, name, type, language, text, size: stat.size };
+}
+
+// ── Read from stdin (pipe support) ──────────────────────────
+
+export async function readStdin(): Promise<FileContent> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const maxSize = 50 * 1024 * 1024;
+
+    process.stdin.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxSize) {
+        reject(new Error(`Stdin input too large (max 50MB)`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    process.stdin.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf-8");
+      resolve({
+        path: "stdin",
+        name: "stdin",
+        type: "text",
+        text,
+        size: Buffer.byteLength(text),
+      });
+    });
+
+    process.stdin.on("error", reject);
+  });
+}
+
+// ── Smart file loader (file path or "-" for stdin) ──────────
+
+export async function loadInput(filePath: string): Promise<FileContent> {
+  if (filePath === "-") {
+    return readStdin();
+  }
+  return readFile(filePath);
 }
 
 // ── Format file info for display ────────────────────────────
@@ -146,9 +159,39 @@ export function formatFileInfo(file: FileContent): string {
         ? `${(file.size / 1024).toFixed(1)}KB`
         : `${(file.size / 1024 / 1024).toFixed(1)}MB`;
 
-  const typeStr = file.language
-    ? `${file.type} (${file.language})`
-    : file.type;
-
+  const typeStr = file.language ? `${file.type} (${file.language})` : file.type;
   return `${file.name} | ${typeStr} | ${sizeStr}`;
+}
+
+// ── List code files in a directory ──────────────────────────
+
+export function listCodeFiles(dirPath: string, maxFiles = 20): string[] {
+  const resolved = path.resolve(dirPath);
+  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+    throw new Error(`Not a directory: ${resolved}`);
+  }
+
+  const files: string[] = [];
+  const skipDirs = new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".next", "vendor"]);
+
+  function walk(dir: string, depth: number) {
+    if (depth > 5 || files.length >= maxFiles) return;
+
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+
+      if (entry.isDirectory() && !skipDirs.has(entry.name) && !entry.name.startsWith(".")) {
+        walk(path.join(dir, entry.name), depth + 1);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (CODE_EXTENSIONS[ext]) {
+          files.push(path.join(dir, entry.name));
+        }
+      }
+    }
+  }
+
+  walk(resolved, 0);
+  return files;
 }

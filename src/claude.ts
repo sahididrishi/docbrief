@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { FileContent } from "./types.js";
+import type { FileContent, TokenUsage, StreamResult } from "./types.js";
 
 // ── Client singleton ────────────────────────────────────────
 
@@ -9,9 +9,10 @@ function getClient(): Anthropic {
   if (!client) {
     if (!process.env.ANTHROPIC_API_KEY) {
       console.error(
-        "\nError: ANTHROPIC_API_KEY environment variable is not set.\n\n" +
-          "Get your API key at: https://console.anthropic.com/settings/keys\n" +
-          "Then run:  export ANTHROPIC_API_KEY=sk-ant-...\n"
+        "\n\x1b[31mError: ANTHROPIC_API_KEY is not set.\x1b[0m\n\n" +
+          "Get your key at: https://console.anthropic.com/settings/keys\n" +
+          "Then run:\n\n" +
+          "  export ANTHROPIC_API_KEY=sk-ant-...\n"
       );
       process.exit(1);
     }
@@ -20,9 +21,11 @@ function getClient(): Anthropic {
   return client;
 }
 
+const DEFAULT_MODEL = "claude-sonnet-4-5-20241022";
+
 // ── Build message content from file ─────────────────────────
 
-function buildFileContent(file: FileContent): Anthropic.ContentBlockParam[] {
+export function buildFileContent(file: FileContent): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
 
   if (file.type === "pdf" && file.base64) {
@@ -62,40 +65,40 @@ export async function streamResponse(
   systemPrompt: string,
   file: FileContent,
   userInstruction: string,
-  opts?: { json?: boolean; model?: string }
-): Promise<string> {
+  opts?: { model?: string }
+): Promise<StreamResult> {
   const claude = getClient();
 
   const fileBlocks = buildFileContent(file);
   fileBlocks.push({ type: "text", text: userInstruction });
 
   const stream = claude.messages.stream({
-    model: opts?.model ?? "claude-sonnet-4-5-20241022",
-    max_tokens: 4096,
+    model: opts?.model ?? DEFAULT_MODEL,
+    max_tokens: 8192,
     system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: fileBlocks,
-      },
-    ],
+    messages: [{ role: "user", content: fileBlocks }],
   });
 
   let fullResponse = "";
 
   for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      const text = event.delta.text;
-      process.stdout.write(text);
-      fullResponse += text;
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      process.stdout.write(event.delta.text);
+      fullResponse += event.delta.text;
     }
   }
 
   process.stdout.write("\n");
-  return fullResponse;
+
+  const finalMessage = await stream.finalMessage();
+  return {
+    text: fullResponse,
+    usage: {
+      input_tokens: finalMessage.usage.input_tokens,
+      output_tokens: finalMessage.usage.output_tokens,
+      model: finalMessage.model,
+    },
+  };
 }
 
 // ── Non-streaming request (for JSON output) ─────────────────
@@ -105,35 +108,34 @@ export async function requestJSON<T>(
   file: FileContent,
   userInstruction: string,
   opts?: { model?: string }
-): Promise<T> {
+): Promise<{ data: T; usage: TokenUsage }> {
   const claude = getClient();
 
   const fileBlocks = buildFileContent(file);
   fileBlocks.push({ type: "text", text: userInstruction });
 
   const response = await claude.messages.create({
-    model: opts?.model ?? "claude-sonnet-4-5-20241022",
-    max_tokens: 4096,
+    model: opts?.model ?? DEFAULT_MODEL,
+    max_tokens: 8192,
     system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: fileBlocks,
-      },
-    ],
+    messages: [{ role: "user", content: fileBlocks }],
   });
 
-  const text =
-    response.content[0].type === "text" ? response.content[0].text : "";
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
 
-  // Extract JSON from response (handles markdown code blocks)
   const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text];
   const jsonStr = jsonMatch[1]?.trim() ?? text.trim();
 
+  const usage: TokenUsage = {
+    input_tokens: response.usage.input_tokens,
+    output_tokens: response.usage.output_tokens,
+    model: response.model,
+  };
+
   try {
-    return JSON.parse(jsonStr) as T;
+    return { data: JSON.parse(jsonStr) as T, usage };
   } catch {
-    throw new Error(`Failed to parse JSON from Claude response:\n${text}`);
+    throw new Error(`Failed to parse JSON response:\n${text.slice(0, 500)}`);
   }
 }
 
@@ -143,20 +145,22 @@ export async function streamComparison(
   systemPrompt: string,
   file1: FileContent,
   file2: FileContent,
-  userInstruction: string
-): Promise<string> {
+  userInstruction: string,
+  opts?: { model?: string }
+): Promise<StreamResult> {
   const claude = getClient();
 
   const content: Anthropic.ContentBlockParam[] = [
+    { type: "text", text: "First document:" },
     ...buildFileContent(file1),
-    { type: "text", text: "\n---\n\nSecond document:\n" },
+    { type: "text", text: "\n---\n\nSecond document:" },
     ...buildFileContent(file2),
     { type: "text", text: userInstruction },
   ];
 
   const stream = claude.messages.stream({
-    model: "claude-sonnet-4-5-20241022",
-    max_tokens: 4096,
+    model: opts?.model ?? DEFAULT_MODEL,
+    max_tokens: 8192,
     system: systemPrompt,
     messages: [{ role: "user", content }],
   });
@@ -164,16 +168,74 @@ export async function streamComparison(
   let fullResponse = "";
 
   for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      const text = event.delta.text;
-      process.stdout.write(text);
-      fullResponse += text;
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      process.stdout.write(event.delta.text);
+      fullResponse += event.delta.text;
     }
   }
 
   process.stdout.write("\n");
-  return fullResponse;
+
+  const finalMessage = await stream.finalMessage();
+  return {
+    text: fullResponse,
+    usage: {
+      input_tokens: finalMessage.usage.input_tokens,
+      output_tokens: finalMessage.usage.output_tokens,
+      model: finalMessage.model,
+    },
+  };
+}
+
+// ── Multi-turn chat ─────────────────────────────────────────
+
+export async function streamChat(
+  systemPrompt: string,
+  file: FileContent,
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  opts?: { model?: string }
+): Promise<StreamResult> {
+  const claude = getClient();
+
+  // Build API messages — first user message includes the file
+  const apiMessages: Anthropic.MessageParam[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (i === 0 && msg.role === "user") {
+      const fileBlocks = buildFileContent(file);
+      fileBlocks.push({ type: "text", text: msg.content });
+      apiMessages.push({ role: "user", content: fileBlocks });
+    } else {
+      apiMessages.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  const stream = claude.messages.stream({
+    model: opts?.model ?? DEFAULT_MODEL,
+    max_tokens: 4096,
+    system: systemPrompt,
+    messages: apiMessages,
+  });
+
+  let fullResponse = "";
+
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      process.stdout.write(event.delta.text);
+      fullResponse += event.delta.text;
+    }
+  }
+
+  process.stdout.write("\n");
+
+  const finalMessage = await stream.finalMessage();
+  return {
+    text: fullResponse,
+    usage: {
+      input_tokens: finalMessage.usage.input_tokens,
+      output_tokens: finalMessage.usage.output_tokens,
+      model: finalMessage.model,
+    },
+  };
 }
