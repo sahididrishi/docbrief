@@ -1,10 +1,10 @@
 import readline from "readline";
 import fs from "fs";
 import path from "path";
-import { streamResponse, requestJSON, streamComparison, streamChat } from "./claude.js";
+import { ClaudeClient, getDefaultClient, buildFileContent } from "./claude.js";
 import { loadInput, formatFileInfo, listCodeFiles, readFile } from "./reader.js";
 import { header, subheader, formatUsage, dim, bold, warn, info, spinner } from "./formatter.js";
-import type { ExtractedData, CodeReview, RedactReport, CommandOpts, TokenUsage } from "./types.js";
+import type { ExtractedData, CodeReview, RedactReport, CommandOpts, TokenUsage, FileContent } from "./types.js";
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -17,8 +17,24 @@ async function writeOutput(opts: CommandOpts, content: string) {
     const dir = path.dirname(opts.output);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(opts.output, content, "utf-8");
-    console.log(`\n${info(">")} Written to ${bold(opts.output)}`);
+    console.error(`\n${info(">")} Written to ${bold(opts.output)}`);
   }
+}
+
+// ── Command runner (shared pattern for simple commands) ─────
+
+async function runCommand(
+  filePath: string,
+  label: string,
+  opts: CommandOpts,
+  execute: (file: FileContent, client: ClaudeClient) => Promise<{ text: string; usage: TokenUsage }>
+): Promise<void> {
+  const file = await loadInput(filePath);
+  header(label, formatFileInfo(file));
+  const client = getDefaultClient(opts.model);
+  const result = await execute(file, client);
+  showUsage(opts, result.usage);
+  await writeOutput(opts, result.text);
 }
 
 // ── Summary ─────────────────────────────────────────────────
@@ -27,9 +43,6 @@ export async function summarize(
   filePath: string,
   opts: CommandOpts & { length?: string }
 ) {
-  const file = await loadInput(filePath);
-  header("Summary", formatFileInfo(file));
-
   const lengthGuide =
     opts.length === "short"
       ? "Provide a 2-3 sentence summary."
@@ -37,15 +50,14 @@ export async function summarize(
         ? "Provide a thorough summary covering all major points (500-800 words)."
         : "Provide a concise summary covering the key points (150-300 words).";
 
-  const result = await streamResponse(
-    "You are a document analysis expert. Provide clear, accurate summaries. Use plain language. Be precise.",
-    file,
-    `Summarize this document. ${lengthGuide}\n\nStructure your response with:\n1. **Overview** — what this document is and its purpose\n2. **Key Points** — the most important information\n3. **Conclusion** — bottom line or main takeaway`,
-    opts
+  await runCommand(filePath, "Summary", opts, (file, client) =>
+    client.streamResponse(
+      "You are a document analysis expert. Provide clear, accurate summaries. Use plain language. Be precise.",
+      file,
+      `Summarize this document. ${lengthGuide}\n\nStructure your response with:\n1. **Overview** — what this document is and its purpose\n2. **Key Points** — the most important information\n3. **Conclusion** — bottom line or main takeaway`,
+      opts
+    )
   );
-
-  showUsage(opts, result.usage);
-  await writeOutput(opts, result.text);
 }
 
 // ── Extract ─────────────────────────────────────────────────
@@ -57,8 +69,9 @@ export async function extract(
   const file = await loadInput(filePath);
   header("Extract", formatFileInfo(file));
 
+  const client = getDefaultClient(opts.model);
   const spin = spinner("Analyzing document");
-  const { data, usage } = await requestJSON<ExtractedData>(
+  const { data, usage } = await client.requestJSON<ExtractedData>(
     "You are a data extraction expert. Extract structured information from documents with high accuracy. Return ONLY valid JSON.",
     file,
     `Extract all structured data from this document. Return a JSON object with these fields:
@@ -92,19 +105,16 @@ export async function ask(
   question: string,
   opts: CommandOpts
 ) {
-  const file = await loadInput(filePath);
-  header("Q&A", formatFileInfo(file));
-  console.log(`${bold("Q:")} ${question}\n`);
-
-  const result = await streamResponse(
-    "You are a document analysis expert. Answer questions accurately and concisely. If the answer isn't in the document, say so clearly. Cite relevant sections when possible.",
-    file,
-    `Answer this question about the document:\n\n${question}`,
-    opts
-  );
-
-  showUsage(opts, result.usage);
-  await writeOutput(opts, `Q: ${question}\n\nA: ${result.text}`);
+  await runCommand(filePath, "Q&A", opts, async (file, client) => {
+    console.error(`${bold("Q:")} ${question}\n`);
+    const result = await client.streamResponse(
+      "You are a document analysis expert. Answer questions accurately and concisely. If the answer isn't in the document, say so clearly. Cite relevant sections when possible.",
+      file,
+      `Answer this question about the document:\n\n${question}`,
+      opts
+    );
+    return { text: `Q: ${question}\n\nA: ${result.text}`, usage: result.usage };
+  });
 }
 
 // ── Actions ─────────────────────────────────────────────────
@@ -113,13 +123,11 @@ export async function actions(
   filePath: string,
   opts: CommandOpts
 ) {
-  const file = await loadInput(filePath);
-  header("Action Items", formatFileInfo(file));
-
-  const result = await streamResponse(
-    "You are a project management expert. Extract actionable items with clarity and specificity.",
-    file,
-    `Extract ALL action items, tasks, to-dos, next steps, and follow-ups from this document.
+  await runCommand(filePath, "Action Items", opts, (file, client) =>
+    client.streamResponse(
+      "You are a project management expert. Extract actionable items with clarity and specificity.",
+      file,
+      `Extract ALL action items, tasks, to-dos, next steps, and follow-ups from this document.
 
 For each item:
 - **Action**: What needs to be done (specific, actionable)
@@ -128,11 +136,9 @@ For each item:
 - **Priority**: High / Medium / Low (infer from context)
 
 If there are no action items, say so and suggest potential next steps based on the content.`,
-    opts
+      opts
+    )
   );
-
-  showUsage(opts, result.usage);
-  await writeOutput(opts, result.text);
 }
 
 // ── Review ──────────────────────────────────────────────────
@@ -147,14 +153,16 @@ export async function review(
   const file = await loadInput(filePath);
 
   if (file.type !== "code" && file.name !== "stdin") {
-    console.log(warn(`Note: ${file.name} doesn't appear to be code. Reviewing anyway.\n`));
+    console.error(warn(`Note: ${file.name} doesn't appear to be code. Reviewing anyway.\n`));
   }
 
   header("Code Review", formatFileInfo(file));
 
+  const client = getDefaultClient(opts.model);
+
   if (opts.format === "json") {
     const spin = spinner("Reviewing code");
-    const { data, usage } = await requestJSON<CodeReview>(
+    const { data, usage } = await client.requestJSON<CodeReview>(
       "You are a senior software engineer doing a thorough code review. Return ONLY valid JSON.",
       file,
       `Review this code and return a JSON object:
@@ -180,7 +188,7 @@ Focus on bugs, security issues, performance, and maintainability. Score 1-10. Be
     showUsage(opts, usage);
     await writeOutput(opts, output);
   } else {
-    const result = await streamResponse(
+    const result = await client.streamResponse(
       "You are a senior software engineer doing a thorough code review. Be constructive, specific, and cite line numbers.",
       file,
       `Review this code:
@@ -220,10 +228,11 @@ export async function compare(
   const file2 = await loadInput(filePath2);
 
   header("Comparison");
-  console.log(`  ${dim("File 1:")} ${formatFileInfo(file1)}`);
-  console.log(`  ${dim("File 2:")} ${formatFileInfo(file2)}\n`);
+  console.error(`  ${dim("File 1:")} ${formatFileInfo(file1)}`);
+  console.error(`  ${dim("File 2:")} ${formatFileInfo(file2)}\n`);
 
-  const result = await streamComparison(
+  const client = getDefaultClient(opts.model);
+  const result = await client.streamComparison(
     "You are a document analysis expert. Compare documents thoroughly and specifically.",
     file1,
     file2,
@@ -261,13 +270,14 @@ export async function chat(
   }
   const file = await loadInput(filePath);
   header("Interactive Chat", formatFileInfo(file));
-  console.log(`${dim("Ask anything about this document. Type")} ${bold("exit")} ${dim("to quit.")}\n`);
+  console.error(`${dim("Ask anything about this document. Type")} ${bold("exit")} ${dim("to quit.")}\n`);
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
+  const client = getDefaultClient(opts.model);
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
   let totalUsage = { input_tokens: 0, output_tokens: 0 };
 
@@ -277,9 +287,9 @@ export async function chat(
       if (!trimmed) { prompt(); return; }
       if (["exit", "quit", ".exit", "/exit"].includes(trimmed.toLowerCase())) {
         if (opts.usage && totalUsage.input_tokens > 0) {
-          console.log(`\n${dim("Session total:")} ${totalUsage.input_tokens.toLocaleString()} in / ${totalUsage.output_tokens.toLocaleString()} out`);
+          console.error(`\n${dim("Session total:")} ${totalUsage.input_tokens.toLocaleString()} in / ${totalUsage.output_tokens.toLocaleString()} out`);
         }
-        console.log(dim("\nGoodbye!"));
+        console.error(dim("\nGoodbye!"));
         rl.close();
         return;
       }
@@ -288,7 +298,7 @@ export async function chat(
       process.stdout.write(`\n${info("Claude:")} `);
 
       try {
-        const result = await streamChat(
+        const result = await client.streamChat(
           "You are a helpful document analysis expert. Answer questions about the provided document accurately and conversationally. Be concise but thorough. If asked about something not in the document, say so.",
           file,
           messages,
@@ -318,19 +328,15 @@ export async function translate(
   language: string,
   opts: CommandOpts
 ) {
-  const file = await loadInput(filePath);
-  header("Translate", formatFileInfo(file));
-  console.log(`${dim("Target language:")} ${bold(language)}\n`);
-
-  const result = await streamResponse(
-    "You are a professional translator. Translate documents accurately while preserving tone, formatting, and meaning. Do not add explanations — only output the translation.",
-    file,
-    `Translate this document into ${language}. Preserve all formatting (headings, lists, code blocks, etc). If the document contains code, translate only comments and strings, not the code itself. Output ONLY the translation.`,
-    opts
-  );
-
-  showUsage(opts, result.usage);
-  await writeOutput(opts, result.text);
+  await runCommand(filePath, "Translate", opts, async (file, client) => {
+    console.error(`${dim("Target language:")} ${bold(language)}\n`);
+    return client.streamResponse(
+      "You are a professional translator. Translate documents accurately while preserving tone, formatting, and meaning. Do not add explanations — only output the translation.",
+      file,
+      `Translate this document into ${language}. Preserve all formatting (headings, lists, code blocks, etc). If the document contains code, translate only comments and strings, not the code itself. Output ONLY the translation.`,
+      opts
+    );
+  });
 }
 
 // ── Redact (find PII / sensitive data) ──────────────────────
@@ -342,9 +348,11 @@ export async function redact(
   const file = await loadInput(filePath);
   header("Security Scan", formatFileInfo(file));
 
+  const client = getDefaultClient(opts.model);
+
   if (opts.format === "json") {
     const spin = spinner("Scanning for sensitive data");
-    const { data, usage } = await requestJSON<RedactReport>(
+    const { data, usage } = await client.requestJSON<RedactReport>(
       "You are a data privacy and security expert. Identify PII and sensitive data with high accuracy. Return ONLY valid JSON.",
       file,
       `Scan this document for personally identifiable information (PII) and sensitive data. Return a JSON object:
@@ -376,7 +384,7 @@ Check for: emails, phone numbers, SSNs, credit card numbers, API keys, passwords
     showUsage(opts, usage);
     await writeOutput(opts, output);
   } else {
-    const result = await streamResponse(
+    const result = await client.streamResponse(
       "You are a data privacy and security expert. Identify PII and sensitive data with high accuracy.",
       file,
       `Scan this document for personally identifiable information (PII) and sensitive data.
@@ -424,9 +432,10 @@ export async function rewrite(
     ? `Target audience: ${opts.audience}.`
     : "";
 
-  console.log(`${dim("Tone:")} ${bold(opts.tone || "improved")}${opts.audience ? `  ${dim("Audience:")} ${bold(opts.audience)}` : ""}\n`);
+  console.error(`${dim("Tone:")} ${bold(opts.tone || "improved")}${opts.audience ? `  ${dim("Audience:")} ${bold(opts.audience)}` : ""}\n`);
 
-  const result = await streamResponse(
+  const client = getDefaultClient(opts.model);
+  const result = await client.streamResponse(
     "You are a professional editor and writer. Rewrite documents to match the requested tone and audience while preserving all factual content and key information. Output ONLY the rewritten text.",
     file,
     `Rewrite this document. ${toneGuide} ${audienceGuide}
@@ -453,20 +462,21 @@ export async function batchReview(
   const files = listCodeFiles(dirPath);
 
   if (files.length === 0) {
-    console.log(warn("No code files found in directory."));
+    console.error(warn("No code files found in directory."));
     return;
   }
 
   header("Batch Code Review", `${files.length} files in ${dirPath}`);
-  console.log(dim(files.map((f) => `  ${f}`).join("\n")) + "\n");
+  console.error(dim(files.map((f) => `  ${f}`).join("\n")) + "\n");
 
+  const client = getDefaultClient(opts.model);
   let totalUsage = { input_tokens: 0, output_tokens: 0, model: "batch" };
 
   for (const filePath of files) {
     const file = readFile(filePath);
     subheader(formatFileInfo(file));
 
-    const result = await streamResponse(
+    const result = await client.streamResponse(
       "You are a senior software engineer. Give a BRIEF code review — 3-5 bullet points max. Focus only on critical issues and bugs. Skip style nits. If the file looks good, just say so in one line.",
       file,
       "Brief code review. Critical issues only. Be concise.",

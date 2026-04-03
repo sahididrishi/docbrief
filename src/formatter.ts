@@ -52,13 +52,13 @@ export function accent(text: string): string {
 
 export function header(label: string, detail?: string): void {
   const line = "─".repeat(50);
-  console.log(`\n${dim(line)}`);
-  console.log(`  ${bold(label)}${detail ? `  ${dim(detail)}` : ""}`);
-  console.log(`${dim(line)}\n`);
+  console.error(`\n${dim(line)}`);
+  console.error(`  ${bold(label)}${detail ? `  ${dim(detail)}` : ""}`);
+  console.error(`${dim(line)}\n`);
 }
 
 export function subheader(label: string): void {
-  console.log(`\n${info(">")} ${bold(label)}\n`);
+  console.error(`\n${info(">")} ${bold(label)}\n`);
 }
 
 // ── Token usage display ─────────────────────────────────────
@@ -84,15 +84,15 @@ export function formatUsage(usage: TokenUsage): void {
   const totalCost =
     inputCost !== null && outputCost !== null ? inputCost + outputCost : null;
 
-  console.log(`\n${dim("─".repeat(50))}`);
-  console.log(
+  console.error(`\n${dim("─".repeat(50))}`);
+  console.error(
     `  ${dim("Tokens:")} ${accent(usage.input_tokens.toLocaleString())} in / ${accent(usage.output_tokens.toLocaleString())} out`
   );
-  console.log(`  ${dim("Model:")}  ${usage.model}`);
+  console.error(`  ${dim("Model:")}  ${usage.model}`);
   if (totalCost !== null) {
-    console.log(`  ${dim("Cost:")}   ${success("$" + totalCost.toFixed(4))}`);
+    console.error(`  ${dim("Cost:")}   ${success("$" + totalCost.toFixed(4))}`);
   }
-  console.log(dim("─".repeat(50)));
+  console.error(dim("─".repeat(50)));
 }
 
 // ── Spinner (simple dots for non-streaming waits) ───────────

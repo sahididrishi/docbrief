@@ -146,11 +146,9 @@ addCommonOpts(
 program.parse();
 
 function run(fn: () => Promise<void>) {
-  fn().catch((err: Error) => {
-    const msg = err.message.includes("Could not process")
-      ? "API error — check your ANTHROPIC_API_KEY and try again"
-      : err.message;
-    console.error(`\n\x1b[31mError:\x1b[0m ${msg}`);
-    process.exit(1);
+  fn().catch((err: any) => {
+    const exitCode = err.exitCode || 1;
+    console.error(`\x1b[31mError:\x1b[0m ${err.message}`);
+    process.exit(exitCode);
   });
 }
