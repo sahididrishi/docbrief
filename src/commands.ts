@@ -1,7 +1,7 @@
 import readline from "readline";
 import fs from "fs";
 import path from "path";
-import { ClaudeClient, getDefaultClient, buildFileContent } from "./claude.js";
+import { ClaudeClient, getDefaultClient } from "./claude.js";
 import { loadInput, formatFileInfo, listCodeFiles, readFile } from "./reader.js";
 import { header, subheader, formatUsage, dim, bold, warn, info, spinner } from "./formatter.js";
 import type { ExtractedData, CodeReview, RedactReport, CommandOpts, TokenUsage, FileContent } from "./types.js";

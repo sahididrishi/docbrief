@@ -262,9 +262,13 @@ docbrief/
 │   ├── claude.ts      # Anthropic SDK — streaming, JSON, multi-turn, usage tracking
 │   ├── reader.ts      # File reader — 50+ formats, stdin, directory scanning
 │   ├── formatter.ts   # Terminal output — ANSI colors, usage display, spinners
-│   └── types.ts       # TypeScript interfaces
+│   ├── types.ts       # TypeScript interfaces
+│   └── errors.ts      # Custom error hierarchy (AuthError, FileError, RateLimitError)
 ├── tests/
-│   └── reader.test.ts # 16 tests — file detection, reading, formatting, scanning
+│   ├── reader.test.ts    # 16 tests — file detection, reading, formatting, scanning
+│   ├── claude.test.ts    # 6 tests — buildFileContent for all file types
+│   ├── errors.test.ts    # 5 tests — error hierarchy, exit codes, inheritance
+│   └── formatter.test.ts # 10 tests — color helpers, pricing lookup
 ├── dist/              # Compiled JavaScript
 ├── package.json
 ├── tsconfig.json
@@ -301,7 +305,7 @@ docbrief/
 | AI | Claude API via `@anthropic-ai/sdk` |
 | CLI | Commander.js |
 | Output | ANSI terminal colors (no dependencies, respects `NO_COLOR`) |
-| Tests | Node.js built-in test runner (16 tests) |
+| Tests | Node.js built-in test runner (37 tests) |
 | Features | Streaming, multi-turn chat, PDF/image support, stdin pipes, token tracking, file output |
 
 ## License
