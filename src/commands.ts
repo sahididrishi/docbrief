@@ -257,8 +257,7 @@ export async function chat(
   opts: CommandOpts
 ) {
   if (filePath === "-") {
-    console.error("Error: Interactive chat mode does not support stdin (-). Provide a file path.");
-    return;
+    throw new Error("Interactive chat mode does not support stdin (-). Provide a file path.");
   }
   const file = await loadInput(filePath);
   header("Interactive Chat", formatFileInfo(file));

@@ -65,14 +65,14 @@ export function subheader(label: string): void {
 
 // Pricing per million tokens (as of 2025)
 const PRICING: Record<string, { input: number; output: number }> = {
-  "claude-sonnet-4-5-20241022": { input: 3, output: 15 },
-  "claude-opus-4-5-20250514": { input: 15, output: 75 },
-  "claude-haiku-4-5-20251001": { input: 0.8, output: 4 },
+  "sonnet": { input: 3, output: 15 },
+  "opus": { input: 15, output: 75 },
+  "haiku": { input: 0.8, output: 4 },
 };
 
 export function formatUsage(usage: TokenUsage): void {
   const pricing = Object.entries(PRICING).find(([key]) =>
-    usage.model.includes(key.split("-").slice(1, 4).join("-"))
+    usage.model.toLowerCase().includes(key)
   );
 
   const inputCost = pricing

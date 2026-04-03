@@ -21,7 +21,7 @@ function getClient(): Anthropic {
   return client;
 }
 
-const DEFAULT_MODEL = "claude-sonnet-4-5-20241022";
+const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
 // ── Build message content from file ─────────────────────────
 
