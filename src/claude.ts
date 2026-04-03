@@ -46,7 +46,7 @@ export function buildFileContent(file: FileContent): Anthropic.ContentBlockParam
         data: file.base64,
       },
     });
-  } else if (file.text) {
+  } else if (file.text != null) {
     const label = file.language
       ? `\`\`\`${file.language}\n${file.text}\n\`\`\``
       : file.text;

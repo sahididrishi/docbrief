@@ -1,5 +1,6 @@
 import readline from "readline";
 import fs from "fs";
+import path from "path";
 import { streamResponse, requestJSON, streamComparison, streamChat } from "./claude.js";
 import { loadInput, formatFileInfo, listCodeFiles, readFile } from "./reader.js";
 import { header, subheader, formatUsage, dim, bold, warn, info, spinner } from "./formatter.js";
@@ -13,6 +14,8 @@ function showUsage(opts: CommandOpts, usage: TokenUsage) {
 
 async function writeOutput(opts: CommandOpts, content: string) {
   if (opts.output) {
+    const dir = path.dirname(opts.output);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(opts.output, content, "utf-8");
     console.log(`\n${info(">")} Written to ${bold(opts.output)}`);
   }
@@ -138,6 +141,9 @@ export async function review(
   filePath: string,
   opts: CommandOpts & { format?: string }
 ) {
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+    return batchReview(filePath, opts);
+  }
   const file = await loadInput(filePath);
 
   if (file.type !== "code" && file.name !== "stdin") {
@@ -154,8 +160,8 @@ export async function review(
       `Review this code and return a JSON object:
 
 {
-  "file": "${file.name}",
-  "language": "${file.language || "unknown"}",
+  "file": "${file.name.replace(/"/g, '\\"')}",
+  "language": "${(file.language || "unknown").replace(/"/g, '\\"')}",
   "summary": "One paragraph overall assessment",
   "issues": [
     { "severity": "critical|warning|suggestion", "line": null, "description": "Issue", "fix": "How to fix" }
@@ -211,7 +217,7 @@ export async function compare(
   opts: CommandOpts
 ) {
   const file1 = await loadInput(filePath1);
-  const file2 = readFile(filePath2);
+  const file2 = await loadInput(filePath2);
 
   header("Comparison");
   console.log(`  ${dim("File 1:")} ${formatFileInfo(file1)}`);
@@ -250,6 +256,10 @@ export async function chat(
   filePath: string,
   opts: CommandOpts
 ) {
+  if (filePath === "-") {
+    console.error("Error: Interactive chat mode does not support stdin (-). Provide a file path.");
+    return;
+  }
   const file = await loadInput(filePath);
   header("Interactive Chat", formatFileInfo(file));
   console.log(`${dim("Ask anything about this document. Type")} ${bold("exit")} ${dim("to quit.")}\n`);
@@ -451,7 +461,7 @@ export async function batchReview(
   header("Batch Code Review", `${files.length} files in ${dirPath}`);
   console.log(dim(files.map((f) => `  ${f}`).join("\n")) + "\n");
 
-  let totalUsage = { input_tokens: 0, output_tokens: 0, model: "" };
+  let totalUsage = { input_tokens: 0, output_tokens: 0, model: "batch" };
 
   for (const filePath of files) {
     const file = readFile(filePath);

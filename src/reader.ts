@@ -111,6 +111,9 @@ export function readFile(filePath: string): FileContent {
 // ── Read from stdin (pipe support) ──────────────────────────
 
 export async function readStdin(): Promise<FileContent> {
+  if (process.stdin.isTTY) {
+    throw new Error("No input piped to stdin. Use a file path instead of '-', or pipe data: echo 'text' | docbrief summary -");
+  }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -120,6 +123,7 @@ export async function readStdin(): Promise<FileContent> {
       size += chunk.length;
       if (size > maxSize) {
         reject(new Error(`Stdin input too large (max 50MB)`));
+        process.stdin.destroy();
         return;
       }
       chunks.push(chunk);

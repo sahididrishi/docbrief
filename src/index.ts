@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import {
   summarize, extract, ask, actions, review, compare,
   chat, translate, redact, rewrite, batchReview,
@@ -32,7 +32,7 @@ addCommonOpts(
     .alias("s")
     .description("Summarize any document (PDF, code, text, image)")
     .argument("<file>", "File path or '-' for stdin")
-    .option("-l, --length <length>", "short | medium | long", "medium")
+    .addOption(new Option("-l, --length <length>", "short | medium | long").default("medium").choices(["short", "medium", "long"]))
 ).action((file, opts) => run(() => summarize(file, opts)));
 
 // ── extract ─────────────────────────────────────────────────
@@ -74,7 +74,7 @@ addCommonOpts(
     .alias("r")
     .description("AI code review — bugs, security issues, improvements")
     .argument("<file>", "File path, directory, or '-' for stdin")
-    .option("-f, --format <format>", "text | json", "text")
+    .addOption(new Option("-f, --format <format>", "text | json").default("text").choices(["text", "json"]))
 ).action((file, opts) => run(() => review(file, opts)));
 
 // ── compare ─────────────────────────────────────────────────
@@ -116,7 +116,7 @@ addCommonOpts(
     .command("redact")
     .description("Scan for PII and sensitive data (emails, SSNs, API keys, etc)")
     .argument("<file>", "File path or '-' for stdin")
-    .option("-f, --format <format>", "text | json", "text")
+    .addOption(new Option("-f, --format <format>", "text | json").default("text").choices(["text", "json"]))
 ).action((file, opts) => run(() => redact(file, opts)));
 
 // ── rewrite ─────────────────────────────────────────────────
