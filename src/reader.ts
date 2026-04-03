@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import type { FileContent, FileType } from "./types.js";
+import { FileError } from "./errors.js";
 
 // ── Language detection by extension ─────────────────────────
 
@@ -77,21 +78,22 @@ function detectFileType(filePath: string): {
 
 // ── Read a file from disk ───────────────────────────────────
 
+/** Read a file from disk and detect its type. */
 export function readFile(filePath: string): FileContent {
   const resolved = path.resolve(filePath);
 
   if (!fs.existsSync(resolved)) {
-    throw new Error(`File not found: ${resolved}`);
+    throw new FileError(`File not found: ${resolved}`);
   }
 
   const stat = fs.statSync(resolved);
   if (!stat.isFile()) {
-    throw new Error(`Not a file: ${resolved}`);
+    throw new FileError(`Not a file: ${resolved}`);
   }
 
   const maxSize = 50 * 1024 * 1024;
   if (stat.size > maxSize) {
-    throw new Error(
+    throw new FileError(
       `File too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB (max 50MB)`
     );
   }
@@ -110,9 +112,10 @@ export function readFile(filePath: string): FileContent {
 
 // ── Read from stdin (pipe support) ──────────────────────────
 
+/** Read all data from stdin. Throws if stdin is a TTY or exceeds 50MB. */
 export async function readStdin(): Promise<FileContent> {
   if (process.stdin.isTTY) {
-    throw new Error("No input piped to stdin. Use a file path instead of '-', or pipe data: echo 'text' | docbrief summary -");
+    throw new FileError("No input piped to stdin. Use a file path instead of '-', or pipe data: echo 'text' | docbrief summary -");
   }
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -122,7 +125,7 @@ export async function readStdin(): Promise<FileContent> {
     process.stdin.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxSize) {
-        reject(new Error(`Stdin input too large (max 50MB)`));
+        reject(new FileError("Stdin input too large (max 50MB)"));
         process.stdin.destroy();
         return;
       }
@@ -146,6 +149,7 @@ export async function readStdin(): Promise<FileContent> {
 
 // ── Smart file loader (file path or "-" for stdin) ──────────
 
+/** Load input from a file path or stdin (pass '-' for stdin). */
 export async function loadInput(filePath: string): Promise<FileContent> {
   if (filePath === "-") {
     return readStdin();
@@ -169,10 +173,11 @@ export function formatFileInfo(file: FileContent): string {
 
 // ── List code files in a directory ──────────────────────────
 
+/** Recursively list code files in a directory, skipping common non-source dirs. */
 export function listCodeFiles(dirPath: string, maxFiles = 20): string[] {
   const resolved = path.resolve(dirPath);
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`Not a directory: ${resolved}`);
+    throw new FileError(`Not a directory: ${resolved}`);
   }
 
   const files: string[] = [];

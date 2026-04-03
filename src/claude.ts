@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { FileContent, TokenUsage, StreamResult } from "./types.js";
+import { AuthError } from "./errors.js";
 
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
 
 // ── Build message content from file ─────────────────────────
 
+/** Converts a FileContent object into Anthropic API content blocks. */
 export function buildFileContent(file: FileContent): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
 
@@ -48,11 +50,7 @@ export class ClaudeClient {
   constructor(opts?: { apiKey?: string; model?: string }) {
     const apiKey = opts?.apiKey || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      throw new Error(
-        "ANTHROPIC_API_KEY is not set.\n" +
-        "Get your key at: https://console.anthropic.com/settings/keys\n" +
-        "Then run: export ANTHROPIC_API_KEY=sk-ant-..."
-      );
+      throw new AuthError();
     }
     this.client = new Anthropic({
       apiKey,
@@ -86,6 +84,7 @@ export class ClaudeClient {
 
   // ── Stream a response to stdout ───────────────────────────
 
+  /** Stream a response from Claude for a single file + instruction. */
   async streamResponse(
     systemPrompt: string,
     file: FileContent,
@@ -107,6 +106,7 @@ export class ClaudeClient {
 
   // ── Non-streaming request (for JSON output) ─────────────────
 
+  /** Send a request expecting a JSON response. Parses from markdown code blocks. */
   async requestJSON<T>(
     systemPrompt: string,
     file: FileContent,
@@ -143,6 +143,7 @@ export class ClaudeClient {
 
   // ── Compare two files ───────────────────────────────────────
 
+  /** Stream a comparison analysis of two files. */
   async streamComparison(
     systemPrompt: string,
     file1: FileContent,
@@ -170,6 +171,7 @@ export class ClaudeClient {
 
   // ── Multi-turn chat ─────────────────────────────────────────
 
+  /** Multi-turn chat with conversation history. First message includes file content. */
   async streamChat(
     systemPrompt: string,
     file: FileContent,

@@ -10,7 +10,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "tsx --test tests/reader.test.ts"
+    "test": "tsx --test tests/reader.test.ts tests/claude.test.ts tests/errors.test.ts tests/formatter.test.ts"
   },
   "keywords": [
     "claude",
